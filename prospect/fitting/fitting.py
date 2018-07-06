@@ -1,7 +1,13 @@
+import time
+from functools import partial as argfix
+
 import numpy as np
 from scipy.optimize import minimize, least_squares
 
-from fitting import run_emcee_sampler, run_dynesty_sampler
+
+from .minimizer import minimize_wrapper, minimizer_ball
+from .ensemble import run_emcee_sampler
+from .nested import run_dynesty_sampler
 from ..likelihood import lnlike_spec, lnlike_phot
 
 
@@ -77,6 +83,11 @@ def lnprobfn(theta, model=None, obs=None, sps=None, noise=(None, None),
     return lnp_prior + lnp_phot + lnp_spec
 
 
+def wrap_lnp(lnp, obs, model, sps, **lnp_kwargs):
+    return argfix(lnprobfn, obs=obs, model=model, sps=sps,
+                  **lnp_kwargs)
+
+
 def fit_model(obs, model, sps, noise, lnprobfn=lnprobfn, **kwargs):
     """
     """
@@ -91,13 +102,13 @@ def fit_model(obs, model, sps, noise, lnprobfn=lnprobfn, **kwargs):
 
     if kwargs["emcee"]:
         sampler, temc = run_emcee(obs, model, sps, noise,
-                                  lnprobfn=lnprobfn, **kwargs))
+                                  lnprobfn=lnprobfn, **kwargs)
     else:
         sampler, temc = None, 0.0
 
     if kwargs["dynesty"]:
         nestout, tnest = run_dynesty(obs, model, sps, noise,
-                                    lnprobfn=lnprobfn, **kwargs))
+                                    lnprobfn=lnprobfn, **kwargs)
     else:
         nestout, tnest = None, 0.0
 
@@ -121,8 +132,8 @@ def run_minimize(obs, model, sps, noise, lnprobfn=lnprobfn,
         residuals = False
 
     args = []
-    loss = partial(lnprobfn, obs=obs, model=model, sps=sps,
-                   noise=noise, residuals=residuals)
+    loss = argfix(lnprobfn, obs=obs, model=model, sps=sps,
+                  noise=noise, residuals=residuals)
     minimizer = minimize_wrapper(loss, algorithm, min_method, min_opts)
     qinit = minimizer_ball(initial, nmin, model)
 
@@ -153,7 +164,7 @@ def run_emcee(obs, model, sps, noise, lnprobfn=lnprobfn,
     postkwargs = {"obs": obs,
                   "model": model,
                   "sps": sps,
-                  "noise"; noise,
+                  "noise": noise,
                   "nested": False,
                   }
 
@@ -167,16 +178,18 @@ def run_emcee(obs, model, sps, noise, lnprobfn=lnprobfn,
 
 
 def run_dynesty(obs, model, sps, noise, lnprobfn=lnprobfn,
-                pool=None, **kwargs):):
+                pool=None, **kwargs):
 
-    def prior_transform(u, model=None):
+    def prior_transform(u, model=model):
         return model.prior_transform(u)
 
+    lnp = wrap_lnp(lnprobfn, obs, model, sps, noise=noise,
+                   nested=True)
 
     # Need to deal with postkwargs
 
     t = time.time()
-    dynestyout = run_dynesty_sampler(lnprobfn, prior_transform, model.ndim,
+    dynestyout = run_dynesty_sampler(lnp, prior_transform, model.ndim,
                                      pool=pool,  **kwargs)
     ts = time.time() - t
 
